@@ -10,7 +10,7 @@ import logging
 import os
 import threading
 import weakref
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol, TypeVar
 from uuid import UUID
 
@@ -51,6 +51,10 @@ class NoDomainError(ValueError):
     """No fixed domain, and the run names none in its config or context."""
 
 
+class DomainConflictError(ValueError):
+    """The run's context and its config name two different domains."""
+
+
 def check_domain(domain: object) -> str:
     """A domain stripped of surrounding space: non-empty and at most 100 characters."""
     if not isinstance(domain, str) or not domain.strip():
@@ -76,20 +80,54 @@ def _lookup(source: object, key: str) -> object:
 
 
 def resolve_domain(fixed: str | None, config: Mapping[str, Any] | None, context: object = None) -> str:
-    """The fixed domain; else ``context["mnemoverse_domain"]`` (a mapping key or an attribute);
-    else ``config["configurable"]["mnemoverse_domain"]``. Never a default: with none of them,
-    :class:`NoDomainError`."""
+    """The domain a call uses: the fixed one; else the one the run names in its ``context``
+    (``context["mnemoverse_domain"]``, a mapping key or an attribute) or its
+    ``config["configurable"]["mnemoverse_domain"]``.
+
+    Never a default: with none of them, :class:`NoDomainError`. When the context and the config
+    both name one and they differ, :class:`DomainConflictError`: the run is ambiguous, and
+    picking either could read one user's memory and write another's.
+    """
     if fixed is not None:
         return fixed
-    value = _lookup(context, CONFIG_KEY)
-    if value is None and config is not None:
-        value = _lookup(config.get("configurable"), CONFIG_KEY)
-    if value is None:
+    from_context = _lookup(context, CONFIG_KEY)
+    from_config = _lookup(config.get("configurable"), CONFIG_KEY) if config is not None else None
+    if from_context is None and from_config is None:
         raise NoDomainError(
-            "no Mnemoverse domain: pass domain= for a single-user app, or set "
-            f"config['configurable']['{CONFIG_KEY}'] per run on the server"
+            "no Mnemoverse domain: pass domain= for a single-user app, or name it per run in "
+            f"config['configurable']['{CONFIG_KEY}'] or the agent's context"
         )
-    return check_domain(value)
+    if from_context is not None and from_config is not None:
+        name = check_domain(from_context)
+        if name != check_domain(from_config):
+            raise DomainConflictError(
+                f"the run's context and its config['configurable'] name different values for "
+                f"'{CONFIG_KEY}'; name the domain in one place"
+            )
+        return name
+    return check_domain(from_context if from_context is not None else from_config)
+
+
+@functools.cache
+def _runtime_getter() -> Callable[[], object] | None:
+    try:
+        from langgraph.runtime import get_runtime
+    except ImportError:  # the base install has no LangGraph, and so no runs with a context
+        return None
+    return get_runtime
+
+
+def run_context() -> object:
+    """The ``context`` of the LangGraph run the caller is part of (``create_agent(...).invoke(...,
+    context=...)``); ``None`` outside a run or without LangGraph."""
+    get_runtime = _runtime_getter()
+    if get_runtime is None:
+        return None
+    try:
+        runtime = get_runtime()
+    except (RuntimeError, KeyError):  # not inside a runnable, or a config without the runtime
+        return None
+    return getattr(runtime, "context", None)
 
 
 class AsyncMemory(Protocol):

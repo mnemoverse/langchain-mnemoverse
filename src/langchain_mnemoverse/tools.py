@@ -22,6 +22,7 @@ from ._common import (
     describe_error,
     memory_lines,
     resolve_domain,
+    run_context,
 )
 
 SEARCH_DESCRIPTION = "Search the user's long-term Mnemoverse memory. Returns memories, each with its id."
@@ -39,10 +40,12 @@ RATE_DESCRIPTION = (
 class _MnemoverseTool(BaseTool):
     """Shared settings and plumbing of the three tools.
 
-    Each call reads or writes one domain: ``domain`` when it is set, otherwise
-    ``config["configurable"]["mnemoverse_domain"]`` of the run. With neither, the call fails
-    closed: the model gets an error message and nothing is read or written. The domain is never
-    an argument the model can set.
+    Each call reads or writes one domain: ``domain`` when it is set, otherwise the one the run
+    names in ``config["configurable"]["mnemoverse_domain"]`` or, inside a ``create_agent`` run,
+    in its ``context`` (the same rule as :class:`MnemoverseMiddleware`). With none, or when the
+    context and the config name different domains, the call fails closed: the model gets an
+    error message and nothing is read or written. The domain is never an argument the model can
+    set.
 
     Every failure reaches the model as a ``ToolMessage`` with ``status="error"`` and the
     server's reason (``handle_tool_error=True``).
@@ -52,8 +55,8 @@ class _MnemoverseTool(BaseTool):
 
     handle_tool_error: bool = True
     domain: str | None = None
-    """The domain every call uses. Leave it out in an app with several users and set
-    ``config["configurable"]["mnemoverse_domain"]`` per run instead."""
+    """The domain every call uses. Leave it out in an app with several users and name it per run
+    in ``config["configurable"]["mnemoverse_domain"]`` or the agent's ``context`` instead."""
     api_key: SecretStr | None = None
     """A Mnemoverse API key. Falls back to the ``MNEMOVERSE_API_KEY`` environment variable."""
     base_url: str = DEFAULT_BASE_URL
@@ -75,7 +78,7 @@ class _MnemoverseTool(BaseTool):
 
     def _domain(self, config: RunnableConfig | None) -> str:
         try:
-            return resolve_domain(self.domain, config)
+            return resolve_domain(self.domain, config, run_context())
         except ValueError as exc:
             raise ToolException(f"Mnemoverse is not available: {exc}.") from exc
 

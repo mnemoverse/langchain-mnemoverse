@@ -98,7 +98,7 @@ Every call reads and writes one Mnemoverse **domain**, a namespace inside your a
   )
   ```
 
-  The middleware also reads `mnemoverse_domain` from the run's `context` (a mapping key or an attribute). The retriever takes `domain=` per call, `retriever.invoke(query, domain=f"user:{user_id}")`, or as a configurable field: `retriever.configurable_fields(domain=ConfigurableField(id="mnemoverse_domain"))`.
+  The middleware and the tools also read `mnemoverse_domain` from the agent run's `context` (`agent.invoke(..., context=...)`, a mapping key or an attribute). If a run names it in both places, the two must agree: when they differ, the tools answer the model with an error and the middleware runs without memory, so one run never reads one user's memory and writes another's. The retriever takes `domain=` per call, `retriever.invoke(query, domain=f"user:{user_id}")`, or as a configurable field: `retriever.configurable_fields(domain=ConfigurableField(id="mnemoverse_domain"))`.
 
 Take `user_id` from your app's signed-in user on the server, never from client input or model output. The domain is never an argument the model can set. A run with no domain gets no memory: the tools answer the model with an error and the middleware logs one warning; it is never served from another domain.
 
@@ -123,7 +123,7 @@ Clients you pass in are never closed by this package.
 
 | Tools and `MnemoverseToolkit` | Default | What it does |
 |---|---|---|
-| `domain` | `None` | The domain every call uses; without it, `config["configurable"]["mnemoverse_domain"]` |
+| `domain` | `None` | The domain every call uses; without it, the run's `config` or `context` |
 | `save` (toolkit) | `True` | Include `mnemoverse_save` |
 | `rate` (toolkit) | `True` | Include `mnemoverse_rate` |
 | `limit` (search argument, set by the model) | 5 | Memories per search, 1 to 50 |

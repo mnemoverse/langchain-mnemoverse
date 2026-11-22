@@ -30,6 +30,7 @@ from ._common import (
     ONLY_ASYNC_CLIENT,
     PLATFORM_METADATA,
     Clients,
+    DomainConflictError,
     NoDomainError,
     NoSyncClientError,
     check_domain,
@@ -97,9 +98,11 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
     cancelled: it finishes in the background, in ``ainvoke`` only while its event loop keeps
     running (``asyncio.run()`` cancels it on return, which is logged).
 
-    The domain is ``domain`` when given; otherwise the run's ``context["mnemoverse_domain"]``
-    (a mapping key or an attribute); otherwise ``config["configurable"]["mnemoverse_domain"]``.
-    With none of them the run gets no memory and one warning is logged.
+    The domain is ``domain`` when given; otherwise the one the run names in its
+    ``context["mnemoverse_domain"]`` (a mapping key or an attribute) or its
+    ``config["configurable"]["mnemoverse_domain"]``, the same rule the tools follow. With none of
+    them the run gets no memory and one warning is logged. When the context and the config name
+    different domains the run gets no memory either, and an error is logged.
 
     A refusal (401 or 403) stops recall, or capture, for that domain only.
 
@@ -188,6 +191,9 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
             if not self._warned_no_domain:
                 self._warned_no_domain = True
                 logger.warning("Mnemoverse: %s; running without memory.", exc)
+            return None
+        except DomainConflictError as exc:  # the tools refuse such a run too
+            logger.error("Mnemoverse: %s; running without memory.", exc)
             return None
         except ValueError as exc:  # a domain the run named, but not a valid one
             logger.warning("Mnemoverse: invalid domain (%s); running without memory.", exc)

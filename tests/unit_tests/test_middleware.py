@@ -227,6 +227,61 @@ def test_toolkit_tools_get_the_run_domain_through_create_agent(mem: FakeMnemo, a
     assert [(n, kw["domain"]) for n, kw in mem.calls] == [("read", "user:dan"), ("write", "user:dan")]
 
 
+def test_context_and_config_naming_different_domains_touch_neither(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, caplog: pytest.LogCaptureFixture
+) -> None:
+    model = scripted(call_tool("mnemoverse_save", {"content": "fact"}), say("done"))
+    kit = MnemoverseToolkit(client=mem, async_client=amem)
+    graph = agent(model, middleware(mem, amem, domain=None, capture=True), tools=kit.get_tools())
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        result = graph.invoke(
+            user("remember"),
+            {"configurable": {"mnemoverse_domain": "user:B"}},
+            context={"mnemoverse_domain": "user:A"},
+        )
+    assert mem.calls == []  # no recall, no save, no capture: neither user's memory is touched
+    tool_message = next(m for m in result["messages"] if isinstance(m, ToolMessage))
+    assert tool_message.status == "error"
+    assert "name different values for 'mnemoverse_domain'" in str(tool_message.content)
+    assert "user:A" not in str(tool_message.content) and "user:B" not in str(tool_message.content)
+    assert "running without memory" in caplog.text
+
+
+@pytest.mark.parametrize("where", ["context", "config", "both"])
+def test_one_run_uses_one_domain_for_recall_tools_and_capture(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, where: str
+) -> None:
+    model = scripted(call_tool("mnemoverse_save", {"content": "fact"}), say("done"))
+    kit = MnemoverseToolkit(client=mem, async_client=amem)
+    graph = agent(model, middleware(mem, amem, domain=None, capture=True), tools=kit.get_tools())
+    named = {"mnemoverse_domain": "user:A"}
+    graph.invoke(
+        user("remember"),
+        {"configurable": named} if where != "context" else None,
+        context=named if where != "config" else None,
+    )
+    assert [(n, kw["domain"]) for n, kw in mem.calls] == [
+        ("read", "user:A"),  # recall
+        ("write", "user:A"),  # the model's mnemoverse_save
+        ("write", "user:A"),  # capture
+    ]
+
+
+async def test_one_run_uses_one_domain_async(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
+    kit = MnemoverseToolkit(client=mem, async_client=amem)
+    mw = middleware(mem, amem, domain=None)
+
+    def graph() -> Any:
+        model = scripted(call_tool("mnemoverse_save", {"content": "fact"}), say("done"))
+        return agent(model, mw, tools=kit.get_tools())
+
+    await graph().ainvoke(user("remember"), context={"mnemoverse_domain": "user:A"})
+    assert [(n, kw["domain"]) for n, kw in amem.calls] == [("read", "user:A"), ("write", "user:A")]
+    conflicting = {"configurable": {"mnemoverse_domain": "user:B"}}
+    await graph().ainvoke(user("remember"), conflicting, context={"mnemoverse_domain": "user:A"})
+    assert len(amem.calls) == 2  # the conflicting run touched nothing
+
+
 # -- failing open ------------------------------------------------------------------------------
 
 
