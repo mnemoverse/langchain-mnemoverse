@@ -8,6 +8,8 @@ import pytest
 from conftest import ERRORS, SAVED_ID, AsyncFakeMnemo, FakeMnemo, Opened, atom_id, item
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
+from mnemoverse import ReadResponse
+from pydantic import ValidationError
 
 from langchain_mnemoverse import (
     MnemoverseRateTool,
@@ -319,11 +321,22 @@ def test_auth_error_names_the_keys_page(mem: FakeMnemo, amem: AsyncFakeMnemo) ->
     assert "https://console.mnemoverse.com/dashboard/keys" in str(msg.content)
 
 
-def test_unexpected_error_reaches_the_model(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
-    mem.fail["read"] = RuntimeError("boom")
+def _malformed_answer() -> Exception:
+    try:
+        ReadResponse.model_validate({"items": [{"content": "PRIVATE-MEMORY-CONTENT"}]})
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("the answer validated")
+
+
+@pytest.mark.parametrize("error", [RuntimeError("boom\nsecond line"), _malformed_answer()])
+def test_unexpected_error_reaches_the_model_as_one_sentence(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, error: Exception
+) -> None:
+    mem.fail["read"] = error
     msg = call(MnemoverseSearchTool(domain="d", client=mem, async_client=amem), {"query": "q"})
     assert msg.status == "error"
-    assert "Mnemoverse call failed: RuntimeError('boom')" in str(msg.content)
+    assert msg.content == f"Mnemoverse call failed unexpectedly ({type(error).__name__})."
 
 
 # -- toolkit -----------------------------------------------------------------------------------

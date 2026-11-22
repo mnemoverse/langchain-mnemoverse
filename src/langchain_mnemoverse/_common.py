@@ -369,7 +369,11 @@ def describe_error(exc: BaseException) -> str:
     if isinstance(exc, MnemoError):
         status = f" ({exc.status})" if exc.status else ""
         return f"Mnemoverse error{status}: {_server_says(exc)}."
-    return f"Mnemoverse call failed: {exc!r}"
+    if isinstance(exc, NoSyncClientError):
+        return f"Mnemoverse is not available: {exc}."
+    # Anything else (an answer that does not parse, an HTTP error the SDK passes through) would
+    # come with a multi-line repr of internals: the model and the logs get the type only.
+    return f"Mnemoverse call failed unexpectedly ({type(exc).__name__})."
 
 
 # "<" and ">" become the single guillemets U+2039 and U+203A.

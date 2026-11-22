@@ -605,3 +605,16 @@ def test_logs_never_name_the_domain(
     assert "ana@example.com" not in caplog.text
     digest = hashlib.sha256(domain.encode()).hexdigest()[:12]
     assert f"recall stopped for domain #{digest} for 15 minutes" in caplog.text
+
+
+def test_an_unexpected_error_is_logged_by_type_only(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, caplog: pytest.LogCaptureFixture
+) -> None:
+    mem.fail["read"] = RuntimeError("internal detail\nsecond line")
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        agent(scripted(), middleware(mem, amem)).invoke(user("q"))
+    assert (
+        "recall failed, running without memory: Mnemoverse call failed unexpectedly (RuntimeError)."
+        in caplog.text
+    )
+    assert "internal detail" not in caplog.text
