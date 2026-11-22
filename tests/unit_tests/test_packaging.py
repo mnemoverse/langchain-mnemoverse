@@ -94,13 +94,27 @@ def test_the_release_gate_wants_the_version_and_a_dated_heading(
     assert (result.returncode == 0) is passes, result.stdout + result.stderr
 
 
-def test_the_release_gate_refuses_the_changelog_as_committed() -> None:
-    # Until the release PR dates it, the heading says unreleased; a tag now must not publish.
+def test_the_release_gate_agrees_with_the_changelog_as_committed() -> None:
+    # Between releases the heading of __version__ says unreleased and a tag must not publish;
+    # once the release PR dates it, the tag for __version__ must pass. Either state is valid,
+    # so the test follows the committed file instead of pinning one of them.
+    version_file = ROOT / "src" / "langchain_mnemoverse" / "_version.py"
+    version = next(
+        line.split('"')[1] for line in version_file.read_text().splitlines() if line.startswith("__version__")
+    )
+    heading = next(
+        line
+        for line in (ROOT / "CHANGELOG.md").read_text().splitlines()
+        if line.startswith(f"## [{version}]")
+    )
     script = _release_step("Tag must match __version__ and a dated CHANGELOG heading")
-    env = {"GITHUB_REF_NAME": "v0.1.0", "PATH": os.environ["PATH"]}
+    env = {"GITHUB_REF_NAME": f"v{version}", "PATH": os.environ["PATH"]}
     result = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env, capture_output=True, text=True)
-    assert result.returncode == 1
-    assert "date the heading first" in result.stdout
+    if "unreleased" in heading.lower():
+        assert result.returncode == 1, result.stdout
+        assert "date the heading first" in result.stdout
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_the_published_files_come_from_a_job_that_runs_no_dev_dependency() -> None:
