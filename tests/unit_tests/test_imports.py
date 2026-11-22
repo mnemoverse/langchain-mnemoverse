@@ -11,6 +11,7 @@ import pytest
 
 import langchain_mnemoverse
 from langchain_mnemoverse import (
+    MIDDLEWARE_IMPORT_ERROR,
     MnemoverseRateTool,
     MnemoverseRetriever,
     MnemoverseSaveTool,
@@ -68,6 +69,30 @@ def test_middleware_without_langchain_says_how_to_install(monkeypatch: pytest.Mo
     )
     # The rest of the package works without langchain.
     assert langchain_mnemoverse.MnemoverseRetriever is MnemoverseRetriever
+
+
+def test_without_langchain_star_import_works_and_the_middleware_says_how_to_install() -> None:
+    # A fresh interpreter where `import langchain` fails, as on an install without the extra.
+    code = """
+import sys
+sys.modules["langchain"] = None
+import langchain_mnemoverse as pkg
+namespace = {}
+exec("from langchain_mnemoverse import *", namespace)
+print(sorted(n for n in namespace if not n.startswith("__")) + ["__version__" in namespace])
+print("MnemoverseMiddleware" in pkg.__all__)
+try:
+    pkg.MnemoverseMiddleware
+except ImportError as exc:
+    print("ImportError:", exc)
+"""
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    names, listed, error = out.stdout.strip().split("\n")
+    without_middleware = [n for n in sorted(EXPECTED_ALL) if n.startswith("Mnemoverse")]
+    without_middleware.remove("MnemoverseMiddleware")
+    assert names == str([*without_middleware, True])
+    assert listed == "False"
+    assert error == "ImportError: " + MIDDLEWARE_IMPORT_ERROR
 
 
 def test_unknown_attribute() -> None:

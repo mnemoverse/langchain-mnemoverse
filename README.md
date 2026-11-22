@@ -20,6 +20,8 @@ The middleware needs the `langchain` package, which the retriever and the tools 
 pip install "langchain-mnemoverse[agents]"
 ```
 
+Without the extra, `MnemoverseMiddleware` raises an `ImportError` that says how to install it, and `from langchain_mnemoverse import *` leaves it out.
+
 or with uv:
 
 ```bash

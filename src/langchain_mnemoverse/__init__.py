@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from typing import TYPE_CHECKING, Any
 
 from ._version import __version__
@@ -46,3 +47,7 @@ __all__ = [
     "MnemoverseToolkit",
     "__version__",
 ]
+if importlib.util.find_spec("langchain") is None:
+    # Without the `agents` extra, `from langchain_mnemoverse import *` must still work: it would
+    # fetch every name in __all__ and stop at the middleware's ImportError.
+    __all__.remove("MnemoverseMiddleware")
