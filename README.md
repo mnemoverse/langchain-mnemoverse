@@ -171,7 +171,7 @@ python examples/agent_with_memory.py
 
 ## Compatibility
 
-Tested with the `mnemoverse` Python SDK 0.5.2, `langchain-core` 1.8.4, `langchain` 1.5.2 and `langchain-tests` 1.1.9 on Python 3.11, 3.12, 3.13 and 3.14, and with the lowest supported versions, `langchain-core` 1.4.7 and `langchain` 1.3.0, on Python 3.11. The tests use fake SDK clients; a live suite runs on demand. It needs SDK 0.5.2 or later: in earlier versions a call refused with a client error (such as 401, 403 or a quota 429) while the client was probing the service after an outage could leave that client refusing every call until the process restarted.
+Tested with the `mnemoverse` Python SDK 0.5.2, `langchain-core` 1.8.4, `langchain` 1.5.2 and `langchain-tests` 1.1.9 on Python 3.11, 3.12, 3.13 and 3.14, and with the lowest supported versions, `langchain-core` 1.4.7, `langchain` 1.3.0 and `pydantic` 2.9.1, on Python 3.11. The tests use fake SDK clients; a live suite runs on demand. It needs SDK 0.5.2 or later: in earlier versions a call refused with a client error (such as 401, 403 or a quota 429) while the client was probing the service after an outage could leave that client refusing every call until the process restarted.
 
 ## Links
 

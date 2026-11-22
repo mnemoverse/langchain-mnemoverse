@@ -11,4 +11,4 @@ All notable changes to `langchain-mnemoverse`.
 - `MnemoverseMiddleware` for `create_agent` (extra `agents`): one recall per run within `recall_timeout`, added to the system message of every model call in that run; optional capture of the user's messages. Memory never breaks a run.
 - Queries are cut to their last 5,000 characters, saves over 10,000 characters are refused and a domain over 100 characters is refused, the API's limits.
 - Examples in `examples/agent_with_memory.py` and `examples/rag_retriever.py`.
-- Requires `langchain-core>=1.4.7,<2` and `mnemoverse>=0.5.2,<0.6.0`; the middleware also `langchain>=1.3.0,<2`. Python 3.11 to 3.14.
+- Requires `langchain-core>=1.4.7,<2`, `mnemoverse>=0.5.2,<0.6.0` and `pydantic>=2.9.1,<3`; the middleware also `langchain>=1.3.0,<2`. Python 3.11 to 3.14.

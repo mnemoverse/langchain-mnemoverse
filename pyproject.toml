@@ -26,7 +26,7 @@ classifiers = [
 dependencies = [
     "langchain-core>=1.4.7,<2",
     "mnemoverse>=0.5.2,<0.6.0",
-    "pydantic>=2.7.4,<3",
+    "pydantic>=2.9.1,<3",
 ]
 
 [project.optional-dependencies]

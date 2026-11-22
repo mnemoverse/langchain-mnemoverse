@@ -45,12 +45,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      # pydantic too: with the langsmith that langchain-core pulls in today, pydantic below
+      # 2.9 cannot import langchain_core (NameError: FeedbackConfigSchema), and 2.9.0 breaks
+      # configurable_fields; 2.9.1 is the lowest that passes this suite.
       - name: Pin the lowest supported versions
         if: matrix.deps == 'lowest'
-        run: pip install "langchain-core==1.4.7" "langchain==1.3.0" "mnemoverse==0.5.2"
+        run: pip install "langchain-core==1.4.7" "langchain==1.3.0" "mnemoverse==0.5.2" "pydantic==2.9.1"
 
       - name: Installed versions
-        run: pip show langchain-core langchain langgraph langchain-tests mnemoverse | grep -E '^(Name|Version):'
+        run: pip show langchain-core langchain langgraph langchain-tests mnemoverse pydantic | grep -E '^(Name|Version):'
 
       - name: Lint
         run: |
