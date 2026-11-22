@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-mnemoverse"
+dynamic = ["version"]
+description = "Mnemoverse long-term memory for LangChain: a retriever, search, save and rate tools, and middleware for create_agent."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "Mnemoverse" }]
+keywords = ["langchain", "mnemoverse", "memory", "long-term-memory", "retriever", "tools", "middleware", "agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "langchain-core>=1.4.7,<2",
+    "mnemoverse>=0.5.2,<0.6.0",
+    "pydantic>=2.7.4,<3",
+]
+
+[project.optional-dependencies]
+agents = ["langchain>=1.3.0,<2"]
+dev = [
+    "langchain>=1.3.0,<2",
+    "langchain-tests==1.1.9",
+    "pytest>=9.0.3,<10",
+    "pytest-asyncio>=1.3.0,<2",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[project.urls]
+Homepage = "https://mnemoverse.com"
+Documentation = "https://mnemoverse.com/docs/api/langchain"
+Repository = "https://github.com/mnemoverse/langchain-mnemoverse"
+Issues = "https://github.com/mnemoverse/langchain-mnemoverse/issues"
+Changelog = "https://github.com/mnemoverse/langchain-mnemoverse/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/langchain_mnemoverse/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/langchain_mnemoverse"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "BLE", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
