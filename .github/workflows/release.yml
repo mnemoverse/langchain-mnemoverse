@@ -13,7 +13,9 @@ name: release
 #   4. git pull && git tag vX.Y.Z && git push origin vX.Y.Z   (tags the merge commit)
 #
 # PyPI is irreversible: a version number can never be reused, even after the
-# file is deleted. Every check runs before the publish job starts.
+# file is deleted. Every check runs before the publish job starts. The job
+# that builds the published files installs nothing but pinned build and twine
+# and runs no test code; no checkout keeps the job token on disk.
 
 on:
   push:
@@ -29,13 +31,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # The gate: tag checks, lint, types and the unit tests. It installs the dev
+  # dependencies and runs test code, so it builds nothing that gets published.
+  test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # the ancestry check needs history
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
         with:
@@ -50,18 +55,20 @@ jobs:
             exit 1
           fi
 
-      - name: Tag must match __version__ and a released CHANGELOG heading
+      - name: Tag must match __version__ and a dated CHANGELOG heading
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME#v}"
+          TAG_RE=$(printf '%s' "$TAG" | sed 's/[.]/[.]/g')
           VERSION=$(grep -m1 '^__version__' src/langchain_mnemoverse/_version.py | cut -d'"' -f2)
           echo "tag=$TAG __version__=$VERSION"
           FAIL=0
           [ "$TAG" = "$VERSION" ] || { echo "::error::__version__ reads $VERSION, the tag expects $TAG"; FAIL=1; }
-          HEADING=$(grep -m1 "^## \[$TAG\]" CHANGELOG.md || true)
-          [ -n "$HEADING" ] || { echo "::error::CHANGELOG.md has no '## [$TAG]' heading"; FAIL=1; }
-          if printf '%s' "$HEADING" | grep -qi 'unreleased'; then
-            echo "::error::CHANGELOG.md still marks $TAG as unreleased; date the heading first"; FAIL=1
+          HEADING=$(grep -m1 "^## \[$TAG_RE\]" CHANGELOG.md || true)
+          if [ -z "$HEADING" ]; then
+            echo "::error::CHANGELOG.md has no '## [$TAG]' heading"; FAIL=1
+          elif ! printf '%s\n' "$HEADING" | grep -Eq "^## \[$TAG_RE\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$"; then
+            echo "::error::CHANGELOG.md reads '$HEADING'; date the heading first: '## [$TAG] - YYYY-MM-DD'"; FAIL=1
           fi
           [ "$FAIL" -eq 0 ] || exit 1
 
@@ -69,7 +76,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          pip install build twine
 
       - name: Lint
         run: |
@@ -82,16 +88,52 @@ jobs:
       - name: Test
         run: python -m pytest tests/unit_tests -q --disable-socket --allow-unix-socket
 
+  # The bytes that get published come from here: a clean checkout and two
+  # pinned tools, before and without any dev dependency or test code.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the build tools
+        run: python -m pip install "build==1.6.1" "twine==7.0.0"
+
       - name: Build
         run: python -m build
 
       - name: Check artifacts
         run: python -m twine check --strict dist/*
 
-      # The steps above import the editable source tree; only the wheel shows
-      # what users get. First the plain install, without the `agents` extra:
-      # everything but the middleware must work, and the middleware must say
-      # how to get it. Then the install with the extra.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # Only the wheel shows what users get. First the plain install, without the
+  # `agents` extra: everything but the middleware must work, and the
+  # middleware must say how to get it. Then the install with the extra.
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
       - name: The built wheel must install and export what it advertises
         run: |
           set -euo pipefail
@@ -120,14 +162,8 @@ jobs:
           /tmp/verify-agents/bin/python -m pip install --quiet "${WHEEL}[agents]"
           /tmp/verify-agents/bin/python -c "from langchain_mnemoverse import MnemoverseMiddleware; print('middleware:', MnemoverseMiddleware.__name__)"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
-
   publish:
-    needs: build
+    needs: [test, build, verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
