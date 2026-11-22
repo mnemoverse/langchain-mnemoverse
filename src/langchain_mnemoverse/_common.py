@@ -236,13 +236,32 @@ def describe_error(exc: BaseException) -> str:
     return f"Mnemoverse call failed: {exc!r}"
 
 
+# "<" and ">" become the single guillemets U+2039 and U+203A.
+_ANGLE_BRACKETS = str.maketrans({"<": chr(0x2039), ">": chr(0x203A)})
+
+
+def one_line(text: str) -> str:
+    """Memory text as it is shown to a model: one line, angle brackets replaced by single
+    guillemets (U+2039, U+203A).
+
+    Memory text is written by other people and other tools (shared rooms, every AI tool on the
+    account, capture). Kept on one line, it cannot start a line of its own that looks like
+    another memory (``- [<id>] ...``) or a heading; without ``<`` and ``>`` it cannot close
+    the ``<mnemoverse_memory>`` block it is shown in, in any spelling.
+    """
+    return " ".join(text.split()).translate(_ANGLE_BRACKETS)
+
+
 def memory_lines(items: list[MemoryItem], limit: int) -> list[str]:
-    """One line per recalled memory with its id, at most ``limit``; empty memories skipped."""
+    """One line per recalled memory with its id, at most ``limit``; empty memories skipped.
+
+    Each memory's text goes through :func:`one_line`, so the ids on these lines are exactly
+    the ids the server returned, one per line."""
     lines: list[str] = []
     for item in items:
         if len(lines) >= limit:
             break
-        content = (item.content or "").strip()
+        content = one_line(item.content or "")
         if content:
             lines.append(f"- [{item.atom_id}] {content}")
     return lines

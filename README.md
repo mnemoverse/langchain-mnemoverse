@@ -134,6 +134,8 @@ There is no delete tool. The toolkit's tools share one pair of clients.
 
 At most `k`, `limit` or `top_k` memories are used, also when the server returns more.
 
+Memory text is written by other people and tools too: members of a shared room, the other AI tools on the account. In the middleware's memory block and in the search tool's answer each memory is therefore one line, with line breaks turned into spaces and `<` and `>` into `‹` and `›`, so a memory cannot close the block or pose as another memory with an id the server never returned. The retriever's documents keep the text unchanged.
+
 ## Errors
 
 - **Retriever:** SDK errors propagate unchanged (`MnemoAuthError`, `MnemoRateLimitError`, `MnemoUnavailableError`, `MnemoError`), so a chain fails loudly; wrap it with `.with_fallbacks(...)` if you prefer. An invalid domain or `k` raises `ValueError`.
