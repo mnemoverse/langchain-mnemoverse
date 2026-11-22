@@ -151,7 +151,7 @@ Memory text is written by other people and tools too: members of a shared room, 
 - **Tools:** every failure reaches the model as a `ToolMessage` with `status="error"` and the server's reason, so the agent can tell the user what happened.
 - **Middleware:** memory never breaks a run. A timeout or a failed call is logged under the `langchain_mnemoverse` logger and the run continues without memory. A refusal (401 or 403) is logged with the server's reason, and the middleware stops recall, or capture, for that domain only.
 
-Long input is kept within the API limits: queries are cut to their last 5,000 characters, the save tool refuses a memory over 10,000 characters, and capture saves the first 10,000.
+Input is kept within the API limits before any request: queries and memories are stripped of surrounding space, queries are then cut to their last 5,000 characters, the save tool refuses a memory over 10,000 characters, and capture saves the first 10,000. A blank query or memory makes no request: the retriever returns no documents, and the search and save tools answer the model with an error.
 
 ## Cost
 

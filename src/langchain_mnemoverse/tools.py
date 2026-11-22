@@ -15,10 +15,10 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, SecretStr, field
 from ._common import (
     DEFAULT_BASE_URL,
     MAX_CONTENT,
-    MAX_QUERY,
     PLATFORM_METADATA,
     Clients,
     check_domain,
+    cut_query,
     describe_error,
     memory_lines,
     resolve_domain,
@@ -110,6 +110,13 @@ class MnemoverseSearchTool(_MnemoverseTool):
     args_schema: type[BaseModel] = SearchInput
 
     @staticmethod
+    def _query(query: str) -> str:
+        text = cut_query(query)
+        if not text:
+            raise ToolException("Nothing to search for: pass what to look for as the query.")
+        return text
+
+    @staticmethod
     def _answer(result: ReadResponse, limit: int) -> str:
         lines = memory_lines(list(result.items), limit)
         if not lines:
@@ -124,9 +131,10 @@ class MnemoverseSearchTool(_MnemoverseTool):
         config: RunnableConfig,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
+        text = self._query(query)
         domain = self._domain(config)
         try:
-            result = self._clients.sync.read(query[-MAX_QUERY:], top_k=limit, domain=domain)
+            result = self._clients.sync.read(text, top_k=limit, domain=domain)
         except Exception as exc:  # the model gets the error as a ToolMessage
             raise _failed(exc) from exc
         return self._answer(result, limit)
@@ -139,9 +147,10 @@ class MnemoverseSearchTool(_MnemoverseTool):
         config: RunnableConfig,
         run_manager: AsyncCallbackManagerForToolRun | None = None,
     ) -> str:
+        text = self._query(query)
         domain = self._domain(config)
         try:
-            result = await self._clients.aio.read(query[-MAX_QUERY:], top_k=limit, domain=domain)
+            result = await self._clients.aio.read(text, top_k=limit, domain=domain)
         except Exception as exc:  # the model gets the error as a ToolMessage
             raise _failed(exc) from exc
         return self._answer(result, limit)
@@ -156,7 +165,8 @@ class SaveInput(BaseModel):
 class MnemoverseSaveTool(_MnemoverseTool):
     """Save one memory to the user's Mnemoverse memory.
 
-    A memory holds up to 10,000 characters; a longer one is refused before any request. Saved
+    The content is stripped; a blank one, or one over 10,000 characters, is refused before any
+    request. Saved
     memories carry ``metadata={"platform": "langchain", "role": "user"}``.
     """
 
@@ -165,12 +175,16 @@ class MnemoverseSaveTool(_MnemoverseTool):
     args_schema: type[BaseModel] = SaveInput
 
     @staticmethod
-    def _check(content: str) -> None:
-        if len(content) > MAX_CONTENT:
+    def _check(content: str) -> str:
+        text = content.strip()
+        if not text:
+            raise ToolException("Nothing to save: pass the fact to keep as the content.")
+        if len(text) > MAX_CONTENT:
             raise ToolException(
                 f"Mnemoverse did not store it: a memory holds up to {MAX_CONTENT:,} characters and "
-                f"this one has {len(content):,}. Save the facts that matter, one per call."
+                f"this one has {len(text):,}. Save the facts that matter, one per call."
             )
+        return text
 
     @staticmethod
     def _answer(result: WriteResponse) -> str:
@@ -186,10 +200,10 @@ class MnemoverseSaveTool(_MnemoverseTool):
         config: RunnableConfig,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        self._check(content)
+        text = self._check(content)
         domain = self._domain(config)
         try:
-            result = self._clients.sync.write(content, domain=domain, metadata=dict(PLATFORM_METADATA))
+            result = self._clients.sync.write(text, domain=domain, metadata=dict(PLATFORM_METADATA))
         except Exception as exc:  # the model gets the error as a ToolMessage
             raise _failed(exc) from exc
         return self._answer(result)
@@ -201,10 +215,10 @@ class MnemoverseSaveTool(_MnemoverseTool):
         config: RunnableConfig,
         run_manager: AsyncCallbackManagerForToolRun | None = None,
     ) -> str:
-        self._check(content)
+        text = self._check(content)
         domain = self._domain(config)
         try:
-            result = await self._clients.aio.write(content, domain=domain, metadata=dict(PLATFORM_METADATA))
+            result = await self._clients.aio.write(text, domain=domain, metadata=dict(PLATFORM_METADATA))
         except Exception as exc:  # the model gets the error as a ToolMessage
             raise _failed(exc) from exc
         return self._answer(result)

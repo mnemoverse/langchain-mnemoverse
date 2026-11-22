@@ -65,6 +65,12 @@ def check_domain(domain: object) -> str:
     return name
 
 
+def cut_query(query: str) -> str:
+    """A query as it is sent: stripped, then cut to its last 5,000 characters. Empty when the
+    query is blank; callers send no request then."""
+    return query.strip()[-MAX_QUERY:].strip()
+
+
 def check_top_k(value: int, name: str = "k") -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_TOP_K:
         raise ValueError(f"{name} must be an integer from 1 to {MAX_TOP_K}")

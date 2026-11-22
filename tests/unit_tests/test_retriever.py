@@ -151,3 +151,16 @@ def test_clients_passed_in_stay_open(mem: FakeMnemo, amem: AsyncFakeMnemo) -> No
     del retriever
     assert not mem.closed
     assert not amem.closed
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\n\t "])
+async def test_blank_query_makes_no_request(mem: FakeMnemo, amem: AsyncFakeMnemo, query: str) -> None:
+    retriever = _retriever(mem, amem)
+    assert retriever.invoke(query) == []
+    assert await retriever.ainvoke(query) == []
+    assert mem.calls == [] and amem.calls == []
+
+
+def test_query_is_stripped_before_it_is_cut(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
+    _retriever(mem, amem).invoke("  real question" + " " * 5000)
+    assert mem.named("read")[0]["query"] == "real question"

@@ -350,3 +350,38 @@ def test_only_an_async_client_and_no_key(no_key: None, amem: AsyncFakeMnemo) -> 
     msg = call(MnemoverseSearchTool(domain="d", async_client=amem), {"query": "q"})
     assert msg.status == "error"
     assert "client=" in str(msg.content)
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\n"])
+async def test_search_with_a_blank_query_makes_no_request(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, query: str
+) -> None:
+    tool = MnemoverseSearchTool(domain="d", client=mem, async_client=amem)
+    for msg in (call(tool, {"query": query}), await acall(tool, {"query": query})):
+        assert msg.status == "error"
+        assert "Nothing to search for" in str(msg.content)
+    assert mem.calls == [] and amem.calls == []
+
+
+def test_search_query_is_stripped_before_it_is_cut(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
+    call(
+        MnemoverseSearchTool(domain="d", client=mem, async_client=amem),
+        {"query": "real question" + " " * 5000},
+    )
+    assert mem.named("read")[0]["query"] == "real question"
+
+
+@pytest.mark.parametrize("content", ["", "   ", "\n\t"])
+async def test_save_with_blank_content_makes_no_request(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, content: str
+) -> None:
+    tool = MnemoverseSaveTool(domain="d", client=mem, async_client=amem)
+    for msg in (call(tool, {"content": content}), await acall(tool, {"content": content})):
+        assert msg.status == "error"
+        assert "Nothing to save" in str(msg.content)
+    assert mem.calls == [] and amem.calls == []
+
+
+def test_save_strips_the_content(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
+    call(MnemoverseSaveTool(domain="d", client=mem, async_client=amem), {"content": "  I take tea \n"})
+    assert mem.named("write")[0]["content"] == "I take tea"

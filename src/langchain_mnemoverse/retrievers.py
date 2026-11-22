@@ -13,7 +13,7 @@ from langchain_core.retrievers import BaseRetriever
 from mnemoverse import AsyncMnemoClient, MnemoClient
 from pydantic import ConfigDict, Field, PrivateAttr, SecretStr, field_validator
 
-from ._common import DEFAULT_BASE_URL, MAX_QUERY, MAX_TOP_K, Clients, check_domain, check_top_k, to_document
+from ._common import DEFAULT_BASE_URL, MAX_TOP_K, Clients, check_domain, check_top_k, cut_query, to_document
 
 
 class MnemoverseRetriever(BaseRetriever):
@@ -43,6 +43,9 @@ class MnemoverseRetriever(BaseRetriever):
 
             docs = retriever.invoke("Which database does the ledger use?")
             docs = retriever.invoke("Which seat?", k=2, domain="user:42")  # per-call k and domain
+
+    The query is stripped and cut to its last 5,000 characters; a blank query returns no
+    documents and makes no request.
 
     SDK errors (``MnemoAuthError``, ``MnemoRateLimitError``, ``MnemoUnavailableError``,
     ``MnemoError``) propagate unchanged; an invalid domain raises ``ValueError``.
@@ -86,7 +89,7 @@ class MnemoverseRetriever(BaseRetriever):
         top_k = self.k if k is None else check_top_k(k)
         name = self.domain if domain is None else check_domain(domain)
         return (
-            query[-MAX_QUERY:],
+            cut_query(query),
             {"top_k": top_k, "domain": name, "min_relevance": self.min_relevance},
             top_k,
         )
@@ -100,6 +103,8 @@ class MnemoverseRetriever(BaseRetriever):
         domain: str | None = None,
     ) -> list[Document]:
         text, kwargs, top_k = self._request(query, k, domain)
+        if not text:  # a blank query: nothing to look for, no request
+            return []
         result = self._clients.sync.read(text, **kwargs)
         return [to_document(item) for item in result.items[:top_k]]
 
@@ -112,6 +117,8 @@ class MnemoverseRetriever(BaseRetriever):
         domain: str | None = None,
     ) -> list[Document]:
         text, kwargs, top_k = self._request(query, k, domain)
+        if not text:  # a blank query: nothing to look for, no request
+            return []
         result = await self._clients.aio.read(text, **kwargs)
         return [to_document(item) for item in result.items[:top_k]]
 

@@ -26,7 +26,6 @@ from mnemoverse import AsyncMnemoClient, MnemoAuthError, MnemoClient, ReadRespon
 from ._common import (
     DEFAULT_BASE_URL,
     MAX_CONTENT,
-    MAX_QUERY,
     ONLY_ASYNC_CLIENT,
     PLATFORM_METADATA,
     Clients,
@@ -35,6 +34,7 @@ from ._common import (
     NoSyncClientError,
     check_domain,
     check_top_k,
+    cut_query,
     describe_error,
     log_late_failure,
     logger,
@@ -323,7 +323,7 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         texts, domain = self._plan_recall(state, runtime)
         if domain is None:
             return self._update(texts, None)
-        query = texts[-1][-MAX_QUERY:]
+        query = cut_query(texts[-1])
         try:
             # With only an async client and no key there is no sync client (NoSyncClientError);
             # that must not break the run either.
@@ -343,7 +343,7 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         texts, domain = self._plan_recall(state, runtime)
         if domain is None:
             return self._update(texts, None)
-        query = texts[-1][-MAX_QUERY:]
+        query = cut_query(texts[-1])
         try:
             result = await within(
                 self._clients.aio.read(
