@@ -3,6 +3,7 @@ and :class:`MnemoverseToolkit`, which builds them around one pair of SDK clients
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -37,6 +38,17 @@ RATE_DESCRIPTION = (
 )
 
 
+def invalid_arguments(exc: Any) -> str:
+    """What the model gets when its arguments fail the schema: each field and the reason, without
+    echoing the values."""
+    parts = []
+    for error in exc.errors():
+        field = ".".join(str(part) for part in error.get("loc", ()))
+        reason = str(error.get("msg", "")).rstrip(".")
+        parts.append(f"{field}: {reason}" if field else reason)
+    return "Invalid arguments" + (": " + "; ".join(parts) if parts else "") + "."
+
+
 class _MnemoverseTool(BaseTool):
     """Shared settings and plumbing of the three tools.
 
@@ -47,13 +59,16 @@ class _MnemoverseTool(BaseTool):
     error message and nothing is read or written. The domain is never an argument the model can
     set.
 
-    Every failure reaches the model as a ``ToolMessage`` with ``status="error"`` and the
-    server's reason (``handle_tool_error=True``).
+    Every failure reaches the model as a ``ToolMessage`` with ``status="error"``: a call the
+    server refused, with its reason (``handle_tool_error``), and arguments that fail the schema,
+    with the field and why (``handle_validation_error``), also when the tool is invoked directly
+    rather than by ``create_agent``.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     handle_tool_error: bool = True
+    handle_validation_error: bool | str | Callable[[Any], str] | None = invalid_arguments
     domain: str | None = None
     """The domain every call uses. Leave it out in an app with several users and name it per run
     in ``config["configurable"]["mnemoverse_domain"]`` or the agent's ``context`` instead."""

@@ -148,7 +148,7 @@ Memory text is written by other people and tools too: members of a shared room, 
 ## Errors
 
 - **Retriever:** SDK errors propagate unchanged (`MnemoAuthError`, `MnemoRateLimitError`, `MnemoUnavailableError`, `MnemoError`), so a chain fails loudly; wrap it with `.with_fallbacks(...)` if you prefer. An invalid domain or `k` raises `ValueError`.
-- **Tools:** every failure reaches the model as a `ToolMessage` with `status="error"` and the server's reason, so the agent can tell the user what happened.
+- **Tools:** every failure reaches the model as a `ToolMessage` with `status="error"`, so the agent can tell the user what happened: a refused call with the server's reason, and arguments that fail the schema (such as `limit` over 50) with the field and why. This holds inside `create_agent` and when you invoke a tool yourself with a `ToolCall`.
 - **Middleware:** memory never breaks a run. A timeout or a failed call is logged under the `langchain_mnemoverse` logger and the run continues without memory. A refusal (401 or 403) is logged with the server's reason, and the middleware stops recall, or capture, for that domain only.
 
 Input is kept within the API limits before any request: queries and memories are stripped of surrounding space, queries are then cut to their last 5,000 characters, the save tool refuses a memory over 10,000 characters, and capture saves the first 10,000. A blank query or memory makes no request: the retriever returns no documents, and the search and save tools answer the model with an error.

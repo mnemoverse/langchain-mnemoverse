@@ -117,11 +117,31 @@ def test_search_query_is_cut_to_its_last_5000_characters(mem: FakeMnemo, amem: A
     assert mem.named("read")[0]["query"] == "b" * 5000
 
 
-def test_search_limit_out_of_range_is_an_error(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
-    tool = MnemoverseSearchTool(domain="d", client=mem, async_client=amem)
-    with pytest.raises(ValueError):  # schema validation, before the tool runs
-        call(tool, {"query": "q", "limit": 51})
-    assert mem.calls == []
+@pytest.mark.parametrize(
+    ("tool_class", "args", "reason"),
+    [
+        (
+            MnemoverseSearchTool,
+            {"query": "q", "limit": 51},
+            "limit: Input should be less than or equal to 50",
+        ),
+        (MnemoverseSearchTool, {"limit": 3}, "query: Field required"),
+        (
+            MnemoverseRateTool,
+            {"memory_ids": "abc", "helpful": True},
+            "memory_ids: Input should be a valid list",
+        ),
+        (MnemoverseSaveTool, {}, "content: Field required"),
+    ],
+)
+async def test_invalid_arguments_reach_the_model_when_invoked_directly(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, tool_class: type[BaseTool], args: dict[str, Any], reason: str
+) -> None:
+    tool = tool_class(domain="d", client=mem, async_client=amem)  # type: ignore[call-arg]
+    for msg in (call(tool, args), await acall(tool, args)):
+        assert msg.status == "error"
+        assert msg.content == f"Invalid arguments: {reason}."
+    assert mem.calls == [] and amem.calls == []
 
 
 async def test_search_async_uses_the_async_client(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
