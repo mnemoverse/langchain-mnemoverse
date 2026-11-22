@@ -201,10 +201,17 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         Args:
             domain: The domain every run reads, for example ``user:42``. Leave it out in an app
                 with several users and name it per run instead.
-            client: A ready sync ``MnemoClient``, used by ``invoke``. Never closed here.
+            client: A ready sync ``MnemoClient``, used by ``invoke`` on a single worker thread.
+                Never closed here. Do not give the tools the same client: a recall that
+                outlives ``recall_timeout`` keeps it busy, and their calls would wait for it.
+                With neither client passed, each worker opens a client of its own from the key.
             async_client: A ready ``AsyncMnemoClient``, used by ``ainvoke``. Never closed here.
+                It works on one event loop (SDK 0.5.2). With neither client passed, the
+                middleware opens one per event loop from the key.
             api_key: A Mnemoverse API key, used when no client is passed. Falls back to the
                 ``MNEMOVERSE_API_KEY`` environment variable; with neither, ``ValueError``.
+                With only ``async_client`` passed, sync runs open their clients only from a key
+                passed here, never from the environment.
             base_url: The Mnemoverse API address.
             top_k: Memories per recall, 1 to 500. At most this many reach the model, also when
                 the server returns more.

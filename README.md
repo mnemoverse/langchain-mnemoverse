@@ -20,13 +20,13 @@ The middleware needs the `langchain` package, which the retriever and the tools 
 pip install "langchain-mnemoverse[agents]"
 ```
 
-Without the extra, `MnemoverseMiddleware` raises an `ImportError` that says how to install it, and `from langchain_mnemoverse import *` leaves it out.
-
 or with uv:
 
 ```bash
 uv add "langchain-mnemoverse[agents]"
 ```
+
+Without the extra, `MnemoverseMiddleware` raises an `ImportError` that says how to install it, and `from langchain_mnemoverse import *` leaves it out.
 
 Create an API key at [console.mnemoverse.com](https://console.mnemoverse.com/dashboard/keys) and set it in the environment, or pass `api_key=`. With neither, and no client passed in (see [Settings](https://github.com/mnemoverse/langchain-mnemoverse/blob/main/README.md#settings)), building any of the components raises `ValueError`.
 
