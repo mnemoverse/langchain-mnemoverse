@@ -38,6 +38,7 @@ from ._common import (
     check_top_k,
     cut_query,
     describe_error,
+    domain_ref,
     log_late_failure,
     logger,
     memory_lines,
@@ -162,7 +163,8 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
 
     A refusal stops recall, or capture, for a while (``REFUSAL_PAUSE``, 15 minutes): a 401 (the
     key is refused) for every domain, a 403 (this key may not use this domain) for that domain
-    only. It is logged with the server's reason, and tried again after the pause.
+    only. It is logged with the server's reason, and tried again after the pause. Logs never
+    name a domain: a refused one appears as ``#`` and 12 hex digits of its SHA-256.
 
     ``after_agent`` saves nothing unless ``capture=True``; then it saves the user's messages of
     the run (not the agent's replies) as one memory, the first 10,000 characters.
@@ -268,9 +270,9 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
             )
         else:
             logger.error(
-                "Mnemoverse: %s stopped for domain %r for %g minutes: %s",
+                "Mnemoverse: %s stopped for domain %s for %g minutes: %s",
                 hook,
-                domain,
+                domain_ref(domain),
                 minutes,
                 describe_error(exc),
             )

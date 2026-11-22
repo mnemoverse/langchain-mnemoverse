@@ -71,6 +71,12 @@ def cut_query(query: str) -> str:
     return query.strip()[-MAX_QUERY:].strip()
 
 
+def domain_ref(domain: str) -> str:
+    """How a domain appears in logs: ``#`` and the first 12 hex digits of its SHA-256. Domains
+    often carry a user id (``user:<id>``, sometimes an email), which does not belong in logs."""
+    return "#" + hashlib.sha256(domain.encode()).hexdigest()[:12]
+
+
 def check_top_k(value: int, name: str = "k") -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= MAX_TOP_K:
         raise ValueError(f"{name} must be an integer from 1 to {MAX_TOP_K}")

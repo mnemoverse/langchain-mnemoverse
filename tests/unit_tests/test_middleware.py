@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import logging
 import time
 from typing import Any
@@ -590,3 +591,17 @@ def test_a_capture_cancelled_by_asyncio_run_is_logged(
     assert len(amem.named("write")) == 1
     assert amem.completed == ["read"]
     assert "the capture that ran past its budget was cancelled before it finished" in caplog.text
+
+
+def test_logs_never_name_the_domain(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, caplog: pytest.LogCaptureFixture
+) -> None:
+    domain = "user:ana@example.com"
+    mem.fail_in[("read", domain)] = ERRORS["forbidden"][0]
+    with caplog.at_level(logging.DEBUG):
+        agent(scripted(), middleware(mem, amem, domain=None)).invoke(
+            user("q"), {"configurable": {"mnemoverse_domain": domain}}
+        )
+    assert "ana@example.com" not in caplog.text
+    digest = hashlib.sha256(domain.encode()).hexdigest()[:12]
+    assert f"recall stopped for domain #{digest} for 15 minutes" in caplog.text
