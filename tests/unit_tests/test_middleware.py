@@ -30,6 +30,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from mnemoverse import MnemoClient, ReadResponse
 
 import langchain_mnemoverse._common as common
+import langchain_mnemoverse.middleware as middleware_module
 from langchain_mnemoverse import MnemoverseMiddleware, MnemoverseToolkit
 from langchain_mnemoverse.middleware import DEFAULT_CONTEXT_PROMPT
 
@@ -325,25 +326,64 @@ def test_failed_recall_runs_without_memory(
     assert phrase in caplog.text
 
 
-def test_refusal_stops_recall_for_that_domain_only(
+def test_a_403_stops_recall_for_that_domain_only(
     mem: FakeMnemo, amem: AsyncFakeMnemo, caplog: pytest.LogCaptureFixture
 ) -> None:
-    mem.fail_in[("read", "user:ana")] = ERRORS["auth"][0]
+    mem.fail_in[("read", "xroom:r1")] = ERRORS["forbidden"][0]
     mw = middleware(mem, amem, domain=None)
     with caplog.at_level(logging.ERROR, logger=LOGGER):
-        for domain in ("user:ana", "user:ana", "user:bob"):
+        for domain in ("xroom:r1", "xroom:r1", "user:bob"):
             agent(scripted(), mw).invoke(user("q"), {"configurable": {"mnemoverse_domain": domain}})
-    assert [c["domain"] for c in mem.named("read")] == ["user:ana", "user:bob"]
-    assert "recall stopped for domain 'user:ana'" in caplog.text
-    assert "refused the call (401): Invalid API key" in caplog.text
+    assert [c["domain"] for c in mem.named("read")] == ["xroom:r1", "user:bob"]
+    assert "recall stopped for domain" in caplog.text
+    assert "refused the call (403): Key is not a member of this room" in caplog.text
 
 
-async def test_refusal_stops_recall_for_that_domain_only_async(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
+async def test_a_403_stops_recall_for_that_domain_only_async(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
     amem.fail_in[("read", "user:ana")] = ERRORS["forbidden"][0]
     mw = middleware(mem, amem, domain=None)
     for domain in ("user:ana", "user:ana", "user:bob"):
         await agent(scripted(), mw).ainvoke(user("q"), {"configurable": {"mnemoverse_domain": domain}})
     assert [c["domain"] for c in amem.named("read")] == ["user:ana", "user:bob"]
+
+
+def test_a_401_stops_recall_for_every_domain(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, caplog: pytest.LogCaptureFixture
+) -> None:
+    mem.fail["read"] = ERRORS["auth"][0]  # a revoked key: every domain is refused
+    mw = middleware(mem, amem, domain=None)
+    with caplog.at_level(logging.ERROR, logger=LOGGER):
+        for i in range(500):
+            agent(scripted(), mw).invoke(user("q"), {"configurable": {"mnemoverse_domain": f"user:{i}"}})
+    assert len(mem.named("read")) == 1  # learned once for the key, not once per user
+    assert len(mw._refused["recall"]) == 1
+    assert "recall stopped for every domain for 15 minutes" in caplog.text
+    assert "refused the call (401): Invalid API key" in caplog.text
+
+
+def test_refusals_are_bounded_and_expire(
+    mem: FakeMnemo, amem: AsyncFakeMnemo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(middleware_module, "_now", lambda: clock[0])
+    monkeypatch.setattr(middleware_module, "MAX_REFUSED_DOMAINS", 3)
+    mem.fail["read"] = ERRORS["forbidden"][0]
+    mw = middleware(mem, amem, domain=None)
+
+    def run(domain: str) -> None:
+        agent(scripted(), mw).invoke(user("q"), {"configurable": {"mnemoverse_domain": domain}})
+
+    for i in range(5):
+        run(f"xroom:{i}")
+    assert len(mw._refused["recall"]) == 3  # the oldest two were forgotten
+    run("xroom:4")
+    assert len(mem.named("read")) == 5  # still paused
+    del mem.fail["read"]
+    clock[0] += middleware_module.REFUSAL_PAUSE  # the room membership was granted meanwhile
+    model = scripted()
+    agent(model, mw).invoke(user("q"), {"configurable": {"mnemoverse_domain": "xroom:4"}})
+    assert len(mem.named("read")) == 6
+    assert "<mnemoverse_memory>" in system_text(model)
 
 
 def test_only_an_async_client_and_no_key_runs_without_memory(no_key: None, amem: AsyncFakeMnemo) -> None:

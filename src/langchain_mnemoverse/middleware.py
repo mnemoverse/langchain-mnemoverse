@@ -8,6 +8,8 @@ from __future__ import annotations
 import concurrent.futures
 import functools
 import threading
+import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, NotRequired
 
@@ -48,6 +50,60 @@ DEFAULT_MIN_RELEVANCE = 0.3
 DEFAULT_RECALL_TIMEOUT = 8.0
 
 _SYNC_WORKERS = 4
+
+REFUSAL_PAUSE = 900.0
+"""Seconds recall, or capture, stays off after a refusal (401 or 403) before it is tried again."""
+MAX_REFUSED_DOMAINS = 1024
+"""Domains with a 403 remembered at once; beyond that the oldest is forgotten (and tried again)."""
+
+_now = time.monotonic
+
+
+class _Refusals:
+    """Where one hook (recall or capture) is off after the server refused it, and until when.
+
+    A 401 means the key itself is refused, for every domain: one entry for the whole key. A 403
+    means this key may not use this domain (a room it is not a member of): one entry for that
+    domain. Entries expire after ``REFUSAL_PAUSE`` seconds, so a key or a membership that is
+    fixed later is picked up without a restart, and at most ``MAX_REFUSED_DOMAINS`` domains are
+    kept, so a shared middleware does not keep one entry per user forever.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._key_until = 0.0
+        self._domains: OrderedDict[str, float] = OrderedDict()
+
+    def blocked(self, domain: str) -> bool:
+        now = _now()
+        with self._lock:
+            if now < self._key_until:
+                return True
+            until = self._domains.get(domain)
+            if until is None:
+                return False
+            if now < until:
+                return True
+            del self._domains[domain]
+            return False
+
+    def add(self, domain: str, exc: MnemoAuthError) -> bool:
+        """Record a refusal; ``True`` when it covers the whole key (a 401)."""
+        until = _now() + REFUSAL_PAUSE
+        with self._lock:
+            if exc.status != 403:
+                self._key_until = until
+                return True
+            self._domains[domain] = until
+            self._domains.move_to_end(domain)
+            while len(self._domains) > MAX_REFUSED_DOMAINS:
+                self._domains.popitem(last=False)
+            return False
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._domains) + (1 if _now() < self._key_until else 0)
+
 
 DEFAULT_CONTEXT_PROMPT = (
     "## Mnemoverse memory\n"
@@ -104,7 +160,9 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
     them the run gets no memory and one warning is logged. When the context and the config name
     different domains the run gets no memory either, and an error is logged.
 
-    A refusal (401 or 403) stops recall, or capture, for that domain only.
+    A refusal stops recall, or capture, for a while (``REFUSAL_PAUSE``, 15 minutes): a 401 (the
+    key is refused) for every domain, a 403 (this key may not use this domain) for that domain
+    only. It is logged with the server's reason, and tried again after the pause.
 
     ``after_agent`` saves nothing unless ``capture=True``; then it saves the user's messages of
     the run (not the agent's replies) as one memory, the first 10,000 characters.
@@ -176,8 +234,8 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         # cancel().
         self._workers = 1 if client is not None else _SYNC_WORKERS
         self._local = threading.local()
-        # Domains whose recall or capture was refused (401 or 403): no more automatic calls there.
-        self._refused: dict[str, set[str]] = {"recall": set(), "capture": set()}
+        # Where recall or capture was refused (401: the whole key; 403: one domain), for a while.
+        self._refused: dict[str, _Refusals] = {"recall": _Refusals(), "capture": _Refusals()}
         self._warned_no_domain = False
         self._executor: concurrent.futures.ThreadPoolExecutor | None = None
         self._executor_lock = threading.Lock()
@@ -200,8 +258,22 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
             return None
 
     def _refuse(self, hook: str, domain: str, exc: MnemoAuthError) -> None:
-        self._refused[hook].add(domain)
-        logger.error("Mnemoverse: %s stopped for domain %r: %s", hook, domain, describe_error(exc))
+        minutes = REFUSAL_PAUSE / 60
+        if self._refused[hook].add(domain, exc):
+            logger.error(
+                "Mnemoverse: %s stopped for every domain for %g minutes: %s",
+                hook,
+                minutes,
+                describe_error(exc),
+            )
+        else:
+            logger.error(
+                "Mnemoverse: %s stopped for domain %r for %g minutes: %s",
+                hook,
+                domain,
+                minutes,
+                describe_error(exc),
+            )
 
     def _block(self, result: ReadResponse) -> str | None:
         lines = memory_lines(list(result.items), self.top_k)
@@ -250,7 +322,7 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         if not texts:
             return texts, None
         domain = self._domain(runtime)
-        if domain is None or domain in self._refused["recall"]:
+        if domain is None or self._refused["recall"].blocked(domain):
             return texts, None
         return texts, domain
 
@@ -278,7 +350,7 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         if not texts:
             return None
         domain = self._domain(runtime)
-        if domain is None or domain in self._refused["capture"]:
+        if domain is None or self._refused["capture"].blocked(domain):
             return None
         content = "\n\n".join(texts)
         if len(content) > MAX_CONTENT:
