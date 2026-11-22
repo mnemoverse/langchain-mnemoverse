@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,6 +31,8 @@ from mnemoverse import (
     WriteResponse,
 )
 from pydantic import Field
+
+import langchain_mnemoverse._common as common
 
 ITEM_COUNT = 8
 """Every read answers with this many memories, more than any test asks for."""
@@ -187,6 +190,66 @@ ERRORS: dict[str, tuple[BaseException, str]] = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _fresh_opened_clients() -> Iterator[None]:
+    """Every test starts with no clients opened by the package."""
+    common._OPENED.clear()
+    yield
+    common._OPENED.clear()
+
+
+class Opened:
+    """What the package opened itself: every ``MnemoClient`` and ``AsyncMnemoClient`` it built."""
+
+    def __init__(self) -> None:
+        self.sync: list[OpenedSync] = []
+        self.aio: list[OpenedAsync] = []
+
+
+class OpenedSync(FakeMnemo):
+    """A fake built where the package would build a ``MnemoClient``; records its arguments."""
+
+    log: Opened
+
+    def __init__(self, api_key: str | None = None, base_url: str = "", **kwargs: Any) -> None:
+        super().__init__()
+        self.api_key, self.base_url = api_key, base_url
+        self.log.sync.append(self)
+
+
+class OpenedAsync(AsyncFakeMnemo):
+    """A fake built where the package would build an ``AsyncMnemoClient``. Like the SDK 0.5.2
+    client, it belongs to the event loop that first used it: on another loop it fails."""
+
+    log: Opened
+
+    def __init__(self, api_key: str | None = None, base_url: str = "", **kwargs: Any) -> None:
+        super().__init__()
+        self.api_key, self.base_url = api_key, base_url
+        self.loop: asyncio.AbstractEventLoop | None = None
+        self.log.aio.append(self)
+
+    async def _enter(self, name: str, **kwargs: Any) -> None:
+        loop = asyncio.get_running_loop()
+        if self.loop is None:
+            self.loop = loop
+        elif self.loop is not loop:
+            raise RuntimeError("Event loop is closed")
+        await super()._enter(name, **kwargs)
+
+
+@pytest.fixture
+def opened(monkeypatch: pytest.MonkeyPatch) -> Opened:
+    """Clients the package opens are fakes, recorded here; ``MNEMOVERSE_API_KEY`` is set."""
+    log = Opened()
+    monkeypatch.setattr(OpenedSync, "log", log, raising=False)
+    monkeypatch.setattr(OpenedAsync, "log", log, raising=False)
+    monkeypatch.setattr(common, "MnemoClient", OpenedSync)
+    monkeypatch.setattr(common, "AsyncMnemoClient", OpenedAsync)
+    monkeypatch.setenv("MNEMOVERSE_API_KEY", "mk_live_env")
+    return log
+
+
 @pytest.fixture
 def mem() -> FakeMnemo:
     return FakeMnemo()
@@ -231,3 +294,8 @@ def call_tool(name: str, args: dict[str, Any], call_id: str = "t1") -> AIMessage
     return AIMessage(
         content="", tool_calls=[{"name": name, "args": args, "id": call_id, "type": "tool_call"}]
     )
+
+
+def user(text: str) -> dict[str, Any]:
+    """Agent input with one user message."""
+    return {"messages": [{"role": "user", "content": text}]}

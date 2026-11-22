@@ -316,8 +316,7 @@ class MnemoverseToolkit(BaseToolkit):
             "api_key": self.api_key,
             "base_url": self.base_url,
             "client": self.client,
-            # The toolkit's own async client, so no tool opens another one.
-            "async_client": self.async_client or self._clients.aio_if_open(),
+            "async_client": self.async_client,
         }
         description = SEARCH_DESCRIPTION + (SEARCH_RATE_HINT if self.rate else "")
         tools: list[_MnemoverseTool] = [MnemoverseSearchTool(description=description, **settings)]
@@ -326,7 +325,7 @@ class MnemoverseToolkit(BaseToolkit):
         if self.rate:
             tools.append(MnemoverseRateTool(**settings))
         for tool in tools:
-            tool._clients = self._clients  # one lazily opened sync client for all of them
+            tool._clients = self._clients  # exactly the toolkit's clients
         return list(tools)
 
 

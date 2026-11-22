@@ -106,7 +106,14 @@ A domain separates how memory is used, not who may read it: the API key can read
 
 ## Settings
 
-Every component takes `api_key` (default: `MNEMOVERSE_API_KEY`), `base_url` (default `https://core.mnemoverse.com`), and `client` and `async_client` for a ready `mnemoverse.MnemoClient` and `AsyncMnemoClient`. Sync calls (`invoke`) use the sync client and async calls (`ainvoke`) the async one; with only a sync client, async calls run it in a worker thread. Clients you pass in are never closed by this package. The clients it opens itself stay open until the process ends, so pass your own when you care about their lifetime.
+Every component takes `api_key` (default: `MNEMOVERSE_API_KEY`), `base_url` (default `https://core.mnemoverse.com`), and `client` and `async_client` for a ready `mnemoverse.MnemoClient` and `AsyncMnemoClient`. Sync calls (`invoke`) use the sync client and async calls (`ainvoke`) the async one.
+
+- **Neither passed:** the package opens its own clients from the key. Components built with the same key and `base_url` share them, including the copies `configurable_fields` makes for each call: one sync client, and one async client per event loop, so a component also works from several `asyncio.run()` calls.
+- **Only `client`:** async calls run it in a worker thread.
+- **Only `async_client`:** sync calls raise `ValueError` unless you also pass `api_key=`. They never fall back to `MNEMOVERSE_API_KEY`, which may belong to another account than your client.
+- An `AsyncMnemoClient` you pass in works on one event loop: SDK 0.5.2 binds its connections to the loop that first used it, and from a second `asyncio.run()` its calls fail with "Event loop is closed". Pass one per loop, or let the package open its own.
+
+Clients you pass in are never closed by this package.
 
 | `MnemoverseRetriever` | Default | What it does |
 |---|---|---|

@@ -5,10 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from conftest import ERRORS, SAVED_ID, AsyncFakeMnemo, FakeMnemo, atom_id, item
+from conftest import ERRORS, SAVED_ID, AsyncFakeMnemo, FakeMnemo, Opened, atom_id, item
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
-from mnemoverse import AsyncMnemoClient
 
 from langchain_mnemoverse import (
     MnemoverseRateTool,
@@ -324,15 +323,16 @@ def test_toolkit_tools_share_one_client_pair(mem: FakeMnemo, amem: AsyncFakeMnem
     assert [n for n, _ in mem.calls] == ["read", "write", "feedback"]
 
 
-def test_toolkit_opens_one_client_pair_for_all_tools(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MNEMOVERSE_API_KEY", "mk_live_test")
+def test_toolkit_opens_one_set_of_clients_for_all_tools(opened: Opened) -> None:
     kit = MnemoverseToolkit(domain="d")
     search, save, rate = kit.get_tools()
-    clients = {id(t._clients) for t in (search, save, rate)}  # type: ignore[attr-defined]
-    assert len(clients) == 1
-    assert isinstance(search.async_client, AsyncMnemoClient)  # type: ignore[attr-defined]
-    assert search.async_client is save.async_client is rate.async_client  # type: ignore[attr-defined]
-    assert search._clients.sync is rate._clients.sync  # type: ignore[attr-defined]
+    assert len({id(t._clients) for t in (search, save, rate)}) == 1  # type: ignore[attr-defined]
+    assert search.async_client is None  # type: ignore[attr-defined]  # nothing injected
+    call(search, {"query": "q"})
+    call(save, {"content": "x"})
+    call(rate, {"memory_ids": ["a"], "helpful": True})
+    assert len(opened.sync) == 1
+    assert [n for n, _ in opened.sync[0].calls] == ["read", "write", "feedback"]
 
 
 def test_toolkit_without_a_key_fails_at_construction(no_key: None) -> None:

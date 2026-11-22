@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import hashlib
 import logging
+import os
+import threading
+import weakref
 from collections.abc import Awaitable, Mapping
 from typing import Any, Protocol, TypeVar
 from uuid import UUID
@@ -132,13 +136,99 @@ class _SyncInExecutor:
         return await asyncio.get_running_loop().run_in_executor(None, call)
 
 
-class Clients:
-    """One sync and one async SDK client: the ones passed in, or opened from the key.
+API_KEY_ENV = "MNEMOVERSE_API_KEY"
 
-    With neither client passed, an ``AsyncMnemoClient`` is opened right away, so a missing key
-    fails at construction (the SDK raises ``ValueError``) rather than at the first call. The
-    sync client is opened on first sync use. Clients passed in are never closed here; clients
-    opened here stay open until the process exits.
+ONLY_ASYNC_CLIENT = (
+    "only an async client was passed (async_client=), so sync calls have no client: pass "
+    "client=MnemoClient(...) too, pass api_key= to let sync calls open their own client, or use "
+    "the async methods (ainvoke)"
+)
+
+
+class NoSyncClientError(ValueError):
+    """A sync call on a component that was given only an async client and no ``api_key``."""
+
+
+class OpenedClients:
+    """The SDK clients this package opens from one key for one address.
+
+    Every component built with the same key and address shares one instance (see
+    :func:`open_clients`), so copies of a component (``configurable_fields`` builds one per
+    call) and the tools of a toolkit do not open clients of their own.
+
+    * One sync ``MnemoClient``, opened on first sync use, under a lock: threads that arrive
+      together open one client, not one each.
+    * One ``AsyncMnemoClient`` per running event loop. SDK 0.5.2 keeps one HTTP connection pool
+      per async client, bound to the event loop that first used it; carried into a second loop
+      (a second ``asyncio.run``), it fails with "Event loop is closed".
+    """
+
+    def __init__(self, key: str, base_url: str) -> None:
+        self._key = key
+        self._base_url = base_url
+        self._lock = threading.Lock()
+        self._sync: MnemoClient | None = None
+        self._by_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, AsyncMnemoClient] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def sync(self) -> MnemoClient:
+        """The shared sync client."""
+        with self._lock:
+            if self._sync is None:
+                self._sync = MnemoClient(api_key=self._key, base_url=self._base_url)
+            return self._sync
+
+    def own_sync(self) -> MnemoClient:
+        """A new sync client that nobody else uses."""
+        return MnemoClient(api_key=self._key, base_url=self._base_url)
+
+    def aio(self) -> AsyncMnemoClient:
+        """The async client of the running event loop."""
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            client = self._by_loop.get(loop)
+            if client is None:
+                client = AsyncMnemoClient(api_key=self._key, base_url=self._base_url)
+                self._by_loop[loop] = client
+            return client
+
+
+# Live only while a component holds them: when the last component built with a key is gone,
+# its clients go too.
+_OPENED: weakref.WeakValueDictionary[tuple[str, str], OpenedClients] = weakref.WeakValueDictionary()
+_OPENED_LOCK = threading.Lock()
+
+
+def open_clients(api_key: str | None, base_url: str) -> OpenedClients:
+    """The clients opened for ``api_key`` (else ``MNEMOVERSE_API_KEY``) and ``base_url``.
+
+    Raises ``ValueError`` when there is no key, at construction rather than at the first call.
+    """
+    key = api_key or os.environ.get(API_KEY_ENV)
+    if not key:
+        raise ValueError(f"No API key: pass api_key= or set the {API_KEY_ENV} environment variable")
+    # A digest, so the key itself is not a dictionary key anybody can list.
+    cache_key = (hashlib.sha256(key.encode()).hexdigest(), base_url.rstrip("/"))
+    with _OPENED_LOCK:
+        opened = _OPENED.get(cache_key)
+        if opened is None:
+            opened = OpenedClients(key, base_url)
+            _OPENED[cache_key] = opened
+        return opened
+
+
+class Clients:
+    """The clients one component calls: the ones passed in, or ones opened from the key.
+
+    * ``client`` and ``async_client`` passed in are used as given and never closed here.
+    * Neither passed: the clients are opened from ``api_key``, else ``MNEMOVERSE_API_KEY``; with
+      neither, ``ValueError`` at construction.
+    * Only ``client`` passed: async calls run it in the event loop's default executor.
+    * Only ``async_client`` passed: sync calls open their own client only from an ``api_key``
+      passed explicitly, at ``base_url``; otherwise they raise :class:`NoSyncClientError`. They
+      never fall back to ``MNEMOVERSE_API_KEY``, which may belong to another account than the
+      client passed in.
     """
 
     def __init__(
@@ -149,39 +239,29 @@ class Clients:
         base_url: str = DEFAULT_BASE_URL,
     ) -> None:
         self._sync = client
-        self._api_key = api_key
-        self._base_url = base_url
         self._async: AsyncMemory | None = async_client
-        self._opened_async: AsyncMnemoClient | None = None
+        self.opened: OpenedClients | None = None
         if client is None and async_client is None:
-            # MNEMOVERSE_API_KEY applies when no key is passed; the SDK raises ValueError here
-            # when neither is set.
-            self._opened_async = AsyncMnemoClient(api_key=api_key, base_url=base_url)
-            self._async = self._opened_async
-
-    def aio_if_open(self) -> AsyncMnemoClient | None:
-        """The async client opened here at construction, if any (never one passed in)."""
-        return self._opened_async
+            self.opened = open_clients(api_key, base_url)
+        elif client is None and api_key:
+            self.opened = open_clients(api_key, base_url)
 
     @property
     def sync(self) -> MnemoClient:
-        if self._sync is None:
-            try:
-                self._sync = MnemoClient(api_key=self._api_key, base_url=self._base_url)
-            except ValueError as exc:
-                raise ValueError(
-                    "only an async client was passed (async_client=) and no API key is set, so "
-                    "sync calls have no client: pass client=MnemoClient(...) too, set "
-                    "MNEMOVERSE_API_KEY, or use the async methods"
-                ) from exc
-        return self._sync
+        if self._sync is not None:
+            return self._sync
+        if self.opened is None:
+            raise NoSyncClientError(ONLY_ASYNC_CLIENT)
+        return self.opened.sync()
 
     @property
     def aio(self) -> AsyncMemory:
-        if self._async is None:
-            # Only a sync client was passed: serve async calls with it in an executor thread.
-            self._async = _SyncInExecutor(self.sync)
-        return self._async
+        if self._async is not None:
+            return self._async
+        if self.opened is not None:
+            return self.opened.aio()
+        assert self._sync is not None  # one of the three is always there
+        return _SyncInExecutor(self._sync)
 
 
 async def within(call: Awaitable[T], timeout: float, what: str) -> T:
