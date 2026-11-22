@@ -93,8 +93,9 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
     waiting at most ``recall_timeout`` seconds. ``wrap_model_call`` appends what it found to the
     system message of every model call in that run, so a tool loop does not read again. On a
     timeout or any error the run goes on without memory and the reason is logged under the
-    ``langchain_mnemoverse`` logger; a call that outlives the budget is not cancelled, it
-    finishes in the background.
+    ``langchain_mnemoverse`` logger. A call that has started and outlives the budget is not
+    cancelled: it finishes in the background, in ``ainvoke`` only while its event loop keeps
+    running (``asyncio.run()`` cancels it on return, which is logged).
 
     The domain is ``domain`` when given; otherwise the run's ``context["mnemoverse_domain"]``
     (a mapping key or an attribute); otherwise ``config["configurable"]["mnemoverse_domain"]``.
@@ -286,7 +287,8 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
     def _capture_failed(self, domain: str, exc: BaseException) -> None:
         if isinstance(exc, TimeoutError):
             logger.warning(
-                "Mnemoverse: capture is still running after %gs; it continues in the background.",
+                "Mnemoverse: capture is still running after %gs; it continues in the background "
+                "while its event loop runs.",
                 self.recall_timeout,
             )
         elif isinstance(exc, MnemoAuthError):

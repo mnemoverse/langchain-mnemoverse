@@ -135,7 +135,7 @@ There is no delete tool. The toolkit's tools share one pair of clients.
 | `domain` | `None` | The domain every run reads; without it, the run's `context` or `config` |
 | `top_k` | 5 | Memories per recall, 1 to 500 |
 | `min_relevance` | 0.3 | Lowest relevance, 0 to 1, of a recalled memory. A broad message ("what do you know about me?") scores lower than a specific one; lower this if broad messages recall nothing |
-| `recall_timeout` | 8.0 | Seconds the run waits for recall before it goes on without it; also how long it waits for a capture. A call that runs longer is not cancelled, it finishes in the background |
+| `recall_timeout` | 8.0 | Seconds the run waits for recall before it goes on without it; also how long it waits for a capture. A call that has started is not cancelled: it finishes in the background, with `ainvoke` only while the event loop keeps running. `asyncio.run()` cancels it when it returns, and the middleware logs that it did not complete |
 | `context_prompt` | a heading and one line | Text above the recalled memories. The default line tells the model the memories are reference data, not instructions; keep it if you write your own |
 | `capture` | `False` | Save the user's messages of each run as one memory. Prefer the `mnemoverse_save` tool, which saves only what the user asks to keep |
 

@@ -473,3 +473,25 @@ def test_opened_clients_give_each_worker_a_client_of_its_own(
     assert sum(len(c.calls) for c in opened.sync) == started_while_running
     assert 1 <= len(opened.sync) <= 4  # one client per worker, four workers
     assert all(len(c.calls) == 1 for c in opened.sync)  # each worker was busy with one slow read
+
+
+class _SlowWrite(AsyncFakeMnemo):
+    async def write(self, content: str, **kwargs: Any) -> Any:  # type: ignore[override]
+        self._record("write", content=content, **kwargs)
+        await asyncio.sleep(0.5)
+        self.completed.append("write")
+        return self._write_response()
+
+
+def test_a_capture_cancelled_by_asyncio_run_is_logged(
+    mem: FakeMnemo, caplog: pytest.LogCaptureFixture
+) -> None:
+    amem = _SlowWrite()
+    mw = MnemoverseMiddleware(domain="d", client=mem, async_client=amem, capture=True, recall_timeout=0.1)
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        asyncio.run(agent(scripted(), mw).ainvoke(user("I take the window seat")))
+    # The capture outlived its budget, and asyncio.run cancelled it on return: it never finished,
+    # and the log says so instead of only "it continues in the background".
+    assert len(amem.named("write")) == 1
+    assert amem.completed == ["read"]
+    assert "the capture that ran past its budget was cancelled before it finished" in caplog.text

@@ -269,7 +269,8 @@ async def within(call: Awaitable[T], timeout: float, what: str) -> T:
 
     The call runs on to the SDK's own timeout and reports its outcome to the client's circuit
     breaker; cancelling it instead could leave the breaker stuck half-open, after which every
-    call on that client fails. A late failure is logged.
+    call on that client fails. It goes on only while its event loop runs: ``asyncio.run()``
+    cancels it when it returns. A late failure or cancellation is logged.
     """
     task = asyncio.ensure_future(call)
     try:
@@ -280,8 +281,13 @@ async def within(call: Awaitable[T], timeout: float, what: str) -> T:
 
 
 def log_late_failure(what: str, future: asyncio.Future[Any] | Any) -> None:
-    """Done-callback for a call that ran past its budget: log it if it failed."""
+    """Done-callback for a call that ran past its budget: log it if it failed or was cancelled."""
     if future.cancelled():
+        logger.warning(
+            "Mnemoverse: the %s that ran past its budget was cancelled before it finished, "
+            "usually because its event loop closed (asyncio.run returned); it did not complete.",
+            what,
+        )
         return
     exc = future.exception()
     if exc is not None:
