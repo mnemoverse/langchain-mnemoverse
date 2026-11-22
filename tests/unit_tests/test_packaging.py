@@ -16,6 +16,11 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
+# The workflows live in the repository; the sdist ships the tests without them.
+pytestmark = pytest.mark.skipif(
+    not (ROOT / ".github" / "workflows").is_dir(), reason="no .github/workflows (an unpacked sdist)"
+)
+
 
 def workflow(name: str) -> dict[str, Any]:
     data: dict[str, Any] = yaml.safe_load((ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8"))
