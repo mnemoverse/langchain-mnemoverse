@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
+import time
 from typing import Any
 
 import pytest
@@ -11,18 +13,23 @@ from conftest import (
     ERRORS,
     AsyncFakeMnemo,
     FakeMnemo,
+    Opened,
+    OpenedSync,
     ScriptedChatModel,
     atom_id,
     call_tool,
     item,
     say,
     scripted,
+    user,
 )
 from langchain.agents import create_agent
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
+from mnemoverse import MnemoClient, ReadResponse
 
+import langchain_mnemoverse._common as common
 from langchain_mnemoverse import MnemoverseMiddleware, MnemoverseToolkit
 from langchain_mnemoverse.middleware import DEFAULT_CONTEXT_PROMPT
 
@@ -33,10 +40,6 @@ LOGGER = "langchain_mnemoverse"
 def echo(x: str) -> str:
     """Echo the input."""
     return x
-
-
-def user(text: str) -> dict[str, Any]:
-    return {"messages": [{"role": "user", "content": text}]}
 
 
 def agent(model: ScriptedChatModel, mw: MnemoverseMiddleware, **kwargs: Any) -> Any:
@@ -383,3 +386,90 @@ def test_defaults(mem: FakeMnemo, amem: AsyncFakeMnemo) -> None:
         False,
     )
     assert mw.context_prompt == DEFAULT_CONTEXT_PROMPT
+
+
+# -- the sync time box -------------------------------------------------------------------------
+
+
+class _SlowCore:
+    """Stands in for the HTTP side of a real ``MnemoClient``: every read takes 0.6 s."""
+
+    async def read(self, query: str, **kwargs: Any) -> ReadResponse:
+        await asyncio.sleep(0.6)
+        return ReadResponse(
+            items=[], episodic_hit=False, query_concepts=[], expanded_concepts=[], search_time_ms=1.0
+        )
+
+    async def close(self) -> None:
+        pass
+
+
+def test_a_recall_past_its_budget_does_not_hold_up_the_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Real MnemoClients, which run one call at a time: a recall that outlives recall_timeout keeps
+    # its client busy. The middleware must not share that client with the tools.
+    made: list[MnemoClient] = []
+
+    def real_slow_client(*args: Any, **kwargs: Any) -> MnemoClient:
+        client = MnemoClient(api_key="mk_live_fake_never_sent")
+        client._async_client = _SlowCore()  # type: ignore[assignment]
+        made.append(client)
+        return client
+
+    monkeypatch.setattr(common, "MnemoClient", real_slow_client)
+    monkeypatch.setenv("MNEMOVERSE_API_KEY", "mk_live_fake_never_sent")
+    model = scripted(call_tool("mnemoverse_search", {"query": "q"}), say("ok"))
+    graph = create_agent(
+        model=model,
+        tools=MnemoverseToolkit(domain="d").get_tools(),
+        middleware=[MnemoverseMiddleware(domain="d", recall_timeout=0.05)],
+    )
+    started = time.monotonic()
+    graph.invoke(user("q"))
+    elapsed = time.monotonic() - started
+    for client in made:
+        client.close()
+    # 0.05 s of recall budget plus the search's own 0.6 s; waiting for the abandoned recall
+    # first would take about 1.2 s.
+    assert elapsed < 1.0, f"the run took {elapsed:.2f} s"
+    assert len(made) == 2  # the tools' client and the middleware worker's own
+
+
+def _parallel_runs(mw: MnemoverseMiddleware, n: int) -> list[str]:
+    def run(i: int) -> str:
+        model = scripted()
+        agent(model, mw).invoke(user(f"q{i}"), {"configurable": {"mnemoverse_domain": f"user:{i}"}})
+        return system_text(model)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=n) as pool:
+        return list(pool.map(run, range(n)))
+
+
+def test_reads_waiting_for_a_worker_are_dropped_when_their_run_gives_up(
+    mem: FakeMnemo, amem: AsyncFakeMnemo
+) -> None:
+    mem.delay = 0.3  # a slow API
+    mw = MnemoverseMiddleware(client=mem, async_client=amem, recall_timeout=0.05)
+    texts = _parallel_runs(mw, 16)
+    assert all("<mnemoverse_memory>" not in text for text in texts)
+    started_while_running = len(mem.calls)
+    time.sleep(0.8)
+    # A client passed in gets one worker; the reads queued behind it were cancelled with their
+    # runs instead of reaching the API afterwards.
+    assert len(mem.calls) == started_while_running == 1
+
+
+def test_opened_clients_give_each_worker_a_client_of_its_own(
+    opened: Opened, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class SlowOpenedSync(OpenedSync):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.delay = 0.3  # a slow API
+
+    monkeypatch.setattr(common, "MnemoClient", SlowOpenedSync)
+    _parallel_runs(MnemoverseMiddleware(recall_timeout=0.05), 16)
+    started_while_running = sum(len(c.calls) for c in opened.sync)
+    time.sleep(0.8)
+    assert sum(len(c.calls) for c in opened.sync) == started_while_running
+    assert 1 <= len(opened.sync) <= 4  # one client per worker, four workers
+    assert all(len(c.calls) == 1 for c in opened.sync)  # each worker was busy with one slow read

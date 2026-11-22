@@ -27,9 +27,11 @@ from ._common import (
     DEFAULT_BASE_URL,
     MAX_CONTENT,
     MAX_QUERY,
+    ONLY_ASYNC_CLIENT,
     PLATFORM_METADATA,
     Clients,
     NoDomainError,
+    NoSyncClientError,
     check_domain,
     check_top_k,
     describe_error,
@@ -43,6 +45,8 @@ from ._common import (
 DEFAULT_TOP_K = 5
 DEFAULT_MIN_RELEVANCE = 0.3
 DEFAULT_RECALL_TIMEOUT = 8.0
+
+_SYNC_WORKERS = 4
 
 DEFAULT_CONTEXT_PROMPT = (
     "## Mnemoverse memory\n"
@@ -160,6 +164,14 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         self.context_prompt = context_prompt
         self.capture = capture
         self._clients = Clients(client, async_client, api_key, base_url)
+        self._passed_sync = client
+        # Sync hooks run their SDK call on a worker thread and wait at most recall_timeout. A
+        # MnemoClient runs one call at a time, and a call that outlives its budget keeps its client
+        # busy until it ends. So each worker has a client of its own (opened from the key), and
+        # a client passed in gets one worker: more would only queue behind it, out of reach of
+        # cancel().
+        self._workers = 1 if client is not None else _SYNC_WORKERS
+        self._local = threading.local()
         # Domains whose recall or capture was refused (401 or 403): no more automatic calls there.
         self._refused: dict[str, set[str]] = {"recall": set(), "capture": set()}
         self._warned_no_domain = False
@@ -194,18 +206,36 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
         with self._executor_lock:
             if self._executor is None:
                 self._executor = concurrent.futures.ThreadPoolExecutor(
-                    max_workers=4, thread_name_prefix="mnemoverse"
+                    max_workers=self._workers, thread_name_prefix="mnemoverse"
                 )
             return self._executor
 
-    def _sync_within(self, call: Callable[[], Any], what: str) -> Any:
-        """Run a sync SDK call in a worker thread and wait at most ``recall_timeout``; a call
-        that runs longer is left to finish in the background."""
-        future = self._pool().submit(call)
+    def _sync_client(self) -> MnemoClient:
+        """The sync client of the calling worker thread: the one passed in, else one of its own."""
+        if self._passed_sync is not None:
+            return self._passed_sync
+        opened = self._clients.opened
+        if opened is None:
+            raise NoSyncClientError(ONLY_ASYNC_CLIENT)
+        client: MnemoClient | None = getattr(self._local, "client", None)
+        if client is None:
+            client = opened.own_sync()
+            self._local.client = client
+        return client
+
+    def _sync_within(self, call: Callable[[MnemoClient], Any], what: str) -> Any:
+        """Run a sync SDK call on a worker thread and wait at most ``recall_timeout``.
+
+        On a timeout, a call still waiting for a worker is cancelled, so it never reaches the API
+        after its run has given up on it. A call that has started is left to finish on its own
+        worker (the SDK's circuit breaker gets its answer) and logged if it fails.
+        """
+        future = self._pool().submit(lambda: call(self._sync_client()))
         try:
             return future.result(timeout=self.recall_timeout)
         except TimeoutError:
-            future.add_done_callback(functools.partial(log_late_failure, what))
+            if not future.cancel():
+                future.add_done_callback(functools.partial(log_late_failure, what))
             raise
 
     def _plan_recall(self, state: MnemoverseState, runtime: Runtime[Any]) -> tuple[list[str], str | None]:
@@ -287,16 +317,14 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
             return self._update(texts, None)
         query = texts[-1][-MAX_QUERY:]
         try:
-            # Inside the try: with only an async client and no key there is no sync client, and
+            # With only an async client and no key there is no sync client (NoSyncClientError);
             # that must not break the run either.
-            call = functools.partial(
-                self._clients.sync.read,
-                query,
-                top_k=self.top_k,
-                domain=domain,
-                min_relevance=self.min_relevance,
+            result: ReadResponse = self._sync_within(
+                lambda client: client.read(
+                    query, top_k=self.top_k, domain=domain, min_relevance=self.min_relevance
+                ),
+                "recall",
             )
-            result: ReadResponse = self._sync_within(call, "recall")
         except Exception as exc:  # noqa: BLE001 - fail open: memory must never break a run
             self._recall_failed(domain, exc)
             return self._update(texts, None)
@@ -344,10 +372,10 @@ class MnemoverseMiddleware(AgentMiddleware[MnemoverseState, Any, Any]):
             return None
         content, domain = planned
         try:
-            call = functools.partial(
-                self._clients.sync.write, content, domain=domain, metadata=dict(PLATFORM_METADATA)
+            self._sync_within(
+                lambda client: client.write(content, domain=domain, metadata=dict(PLATFORM_METADATA)),
+                "capture",
             )
-            self._sync_within(call, "capture")
         except Exception as exc:  # noqa: BLE001 - a failed capture must never break a run
             self._capture_failed(domain, exc)
         return None

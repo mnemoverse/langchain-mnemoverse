@@ -139,6 +139,8 @@ There is no delete tool. The toolkit's tools share one pair of clients.
 | `context_prompt` | a heading and one line | Text above the recalled memories. The default line tells the model the memories are reference data, not instructions; keep it if you write your own |
 | `capture` | `False` | Save the user's messages of each run as one memory. Prefer the `mnemoverse_save` tool, which saves only what the user asks to keep |
 
+With `invoke`, the middleware runs each recall and capture on one of four worker threads, each with a client of its own when the middleware opens its clients from the key. A slow call therefore never holds up the agent's tool calls, and a call still waiting for a worker when its run stops waiting is dropped, not sent later. A `MnemoClient` passed as `client=` runs one call at a time, so the middleware gives it a single worker; do not pass the tools the same client, because a recall that outlives `recall_timeout` keeps it busy and the next tool call waits for it. For a server with many users at once, call the agent with `ainvoke`, where calls run concurrently on the async client.
+
 At most `k`, `limit` or `top_k` memories are used, also when the server returns more.
 
 Memory text is written by other people and tools too: members of a shared room, the other AI tools on the account. In the middleware's memory block and in the search tool's answer each memory is therefore one line, with line breaks turned into spaces and `<` and `>` into `‹` and `›`, so a memory cannot close the block or pose as another memory with an id the server never returned. The retriever's documents keep the text unchanged.
