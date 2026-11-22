@@ -28,7 +28,7 @@ or with uv:
 uv add "langchain-mnemoverse[agents]"
 ```
 
-Create an API key at [console.mnemoverse.com](https://console.mnemoverse.com/dashboard/keys) and set it in the environment, or pass `api_key=`. With neither, and no client passed in (see [Settings](#settings)), building any of the components raises `ValueError`.
+Create an API key at [console.mnemoverse.com](https://console.mnemoverse.com/dashboard/keys) and set it in the environment, or pass `api_key=`. With neither, and no client passed in (see [Settings](https://github.com/mnemoverse/langchain-mnemoverse/blob/main/README.md#settings)), building any of the components raises `ValueError`.
 
 ```bash
 export MNEMOVERSE_API_KEY=mk_live_...
@@ -158,11 +158,11 @@ Input is kept within the API limits before any request: queries and memories are
 
 ## Cost
 
-Each retriever call and each tool call makes at most one request; a save refused for its length and a rating with no ids make none. The middleware makes at most one read per agent run, and one write more with `capture=True`. Reads, writes and ratings count together against your plan's daily query limit: the Free plan allows 1,000 queries a day. Plans and limits are on [mnemoverse.com/pricing](https://mnemoverse.com/pricing).
+Each retriever call and each tool call is one API call, which counts as at most one query against your plan: the SDK retries a call that failed for a passing reason (a timeout, a lost connection, a rate limit or a server error) up to three more times, and only successful requests count. A blank query or memory, a save refused for its length and a rating with no ids make no call. The middleware makes at most one read per agent run, and one write more with `capture=True`. Reads, writes and ratings count together against your plan's daily query limit: the Free plan allows 1,000 queries a day. Plans and limits are on [mnemoverse.com/pricing](https://mnemoverse.com/pricing).
 
 ## Examples
 
-[`examples/agent_with_memory.py`](examples/agent_with_memory.py) is an agent with the middleware and the toolkit, and [`examples/rag_retriever.py`](examples/rag_retriever.py) a retriever in a small chain. Both need `MNEMOVERSE_API_KEY` and `OPENAI_API_KEY`:
+[`examples/agent_with_memory.py`](https://github.com/mnemoverse/langchain-mnemoverse/blob/main/examples/agent_with_memory.py) is an agent with the middleware and the toolkit, and [`examples/rag_retriever.py`](https://github.com/mnemoverse/langchain-mnemoverse/blob/main/examples/rag_retriever.py) a retriever in a small chain. Both need `MNEMOVERSE_API_KEY` and `OPENAI_API_KEY`:
 
 ```bash
 pip install "langchain-mnemoverse[agents]" langchain-openai
@@ -182,4 +182,4 @@ Tested with the `mnemoverse` Python SDK 0.5.2, `langchain-core` 1.8.4, `langchai
 
 ## License
 
-MIT, as LangChain. See [LICENSE](LICENSE).
+MIT, as LangChain. See [LICENSE](https://github.com/mnemoverse/langchain-mnemoverse/blob/main/LICENSE).
