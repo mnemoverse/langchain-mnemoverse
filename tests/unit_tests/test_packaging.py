@@ -37,3 +37,16 @@ def test_the_lowest_leg_pins_every_floor() -> None:
     pin = next(s for s in steps if s.get("name") == "Pin the lowest supported versions")
     pinned = dict(arg.split("==") for arg in shlex.split(pin["run"]) if "==" in arg)
     assert pinned == floors()
+
+
+def test_pytest_plugins_the_workflows_rely_on_are_direct_dev_dependencies() -> None:
+    dev = {
+        re.split(r"[<>=!~ ]", spec, maxsplit=1)[0]
+        for spec in PYPROJECT["project"]["optional-dependencies"]["dev"]
+    }
+    texts = [
+        (ROOT / ".github" / "workflows" / n).read_text(encoding="utf-8") for n in ("ci.yml", "release.yml")
+    ]
+    if any("--disable-socket" in text for text in texts):
+        assert "pytest-socket" in dev  # not only through langchain-tests
+    assert {"pytest", "pytest-asyncio"} <= dev
