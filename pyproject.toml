@@ -55,7 +55,7 @@ path = "src/langchain_mnemoverse/_version.py"
 packages = ["src/langchain_mnemoverse"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "tests", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
+include = ["src", "scripts", "tests", "examples", "README.md", "LICENSE", "CHANGELOG.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
